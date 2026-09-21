@@ -618,13 +618,24 @@ controller_interface::return_type MecanumDriveController::update_and_write_comma
   }
   else
   {
-    const bool value_set_error =
-      command_interfaces_[FRONT_LEFT].set_value(0.0, std::numeric_limits<unsigned int>::max()) ||
-      command_interfaces_[FRONT_RIGHT].set_value(0.0, std::numeric_limits<unsigned int>::max()) ||
-      command_interfaces_[REAR_RIGHT].set_value(0.0, std::numeric_limits<unsigned int>::max()) ||
-      command_interfaces_[REAR_LEFT].set_value(0.0, std::numeric_limits<unsigned int>::max());
+    // Reset the rate-limiter history so that when a fresh non-NaN reference
+    // resumes, `limiter->limit()` starts from rest instead of slewing from the
+    // stale pre-NaN command back to the new target. Without this, releasing
+    // and re-enabling the deadman while the joystick is centered can produce
+    // a spurious wheel burst.
+    previous_two_commands_ = std::queue<std::array<double, 3>>(
+      std::deque<std::array<double, 3>>{{{0.0, 0.0, 0.0}}, {{0.0, 0.0, 0.0}}});
+
+    // Use `&=` (not `&&`) so every wheel is actually written; an `&&`-chain
+    // short-circuits on the first failed set_value and leaves the remaining
+    // wheels at their last (non-zero) inverse-kinematics value.
+    bool value_set_no_error = true;
+    value_set_no_error &= command_interfaces_[FRONT_LEFT].set_value(0.0);
+    value_set_no_error &= command_interfaces_[FRONT_RIGHT].set_value(0.0);
+    value_set_no_error &= command_interfaces_[REAR_RIGHT].set_value(0.0);
+    value_set_no_error &= command_interfaces_[REAR_LEFT].set_value(0.0);
     RCLCPP_ERROR_EXPRESSION(
-      get_node()->get_logger(), !value_set_error,
+      get_node()->get_logger(), !value_set_no_error,
       "Setting values to command interfaces has failed! "
       "This means that you are maybe blocking the interface in your hardware for too long.");
   }
